@@ -1,0 +1,6 @@
+#!/Users/cokoro/Downloads/recfun/venv/bin/python3
+
+from workflow_templates import AdhocDataCopier
+
+if __name__ == '__main__':
+    AdhocDataCopier.from_args(check_workflow_templates_version=True).run()

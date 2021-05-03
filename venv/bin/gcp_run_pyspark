@@ -1,0 +1,6 @@
+#!/Users/cokoro/Downloads/recfun/venv/bin/python3
+
+from workflow_templates import AdhocPysparkRunner
+
+if __name__ == '__main__':
+    AdhocPysparkRunner.from_args(check_workflow_templates_version=True).run()

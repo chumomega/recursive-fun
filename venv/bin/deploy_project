@@ -1,0 +1,16 @@
+#!/Users/cokoro/Downloads/recfun/venv/bin/python3
+
+msg = """
+    The deploy_project is provided as legacy support.  It is recommended to directly
+    use the equivalent command `update_project deploy`.
+"""
+
+import os
+import sys
+
+path_to_update_project = os.path.join(os.path.dirname(sys.argv[0]), 'update_project')
+update_project_args = [ path_to_update_project, 'deploy' ] + sys.argv[1:]
+
+print(msg)
+print('Executing: {}'.format(' '.join(update_project_args)))
+os.execv(path_to_update_project, update_project_args)

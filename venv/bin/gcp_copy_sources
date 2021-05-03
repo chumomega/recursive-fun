@@ -1,0 +1,7 @@
+#!/Users/cokoro/Downloads/recfun/venv/bin/python3
+
+from workflow_templates import AdhocMissingSourceDataCopier
+
+
+if __name__ == '__main__':
+    AdhocMissingSourceDataCopier.from_args(check_workflow_templates_version=True).run()

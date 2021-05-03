@@ -1,0 +1,16 @@
+#!/Users/cokoro/Downloads/recfun/venv/bin/python3
+
+import warnings
+
+warnings.filterwarnings("ignore", "Your application has authenticated using end user credentials")
+
+from etsy_dataproc_common_config.util import call_and_catch_cli_func_with_troubleshooting_steps
+from functools import partial
+from workflow_templates import AdhocScaldingRunner
+
+
+if __name__ == '__main__':
+    runner = call_and_catch_cli_func_with_troubleshooting_steps(
+        partial(AdhocScaldingRunner.from_args, check_workflow_templates_version=True))
+    if runner:
+        call_and_catch_cli_func_with_troubleshooting_steps(partial(runner.run))

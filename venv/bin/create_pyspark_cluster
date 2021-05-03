@@ -1,0 +1,23 @@
+#!/Users/cokoro/Downloads/recfun/venv/bin/python3
+from etsy_dataproc_common_config import create_cluster_utils
+from etsy_dataproc_common_config import script_utils
+from etsy_dataproc_common_config.util import call_and_catch_cli_func_with_troubleshooting_steps
+from etsy_dataproc_common_config.pysparkclient.create_cluster import add_pyspark_init_action,add_default_custom_image
+from functools import partial
+
+
+if __name__ == '__main__':
+
+    (default_project_id, user_email) = script_utils.get_project_and_user()
+
+    args = create_cluster_utils.get_pyspark_args(default_project_id)
+
+    args = add_pyspark_init_action(args)
+    
+    args.dataproc_image_uri = add_default_custom_image(default_project_id)
+
+    cluster_config = call_and_catch_cli_func_with_troubleshooting_steps(
+        partial(create_cluster_utils.create_cluster_config, args, user_email))
+
+    call_and_catch_cli_func_with_troubleshooting_steps(
+        partial(create_cluster_utils.dataproc_cluster_create, args, cluster_config))

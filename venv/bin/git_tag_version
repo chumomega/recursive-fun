@@ -1,0 +1,42 @@
+#!/Users/cokoro/Downloads/recfun/venv/bin/python3
+
+import argparse
+import logging
+from stallion.release_process import ReleaseProcessor
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('tag_name', help='base name for tags')
+    parser.add_argument('--tag_separator', default='@', help='separator between tag name and version')
+    parser.add_argument('--code_repo_owner', default='Engineering')
+    parser.add_argument('--code_repo', default='BigData')
+
+    # should not be possible to increment major and patch versions at the same time
+    increment_group = parser.add_mutually_exclusive_group(required=False)
+    increment_group.add_argument('--increment', action='store_true', default=False, help='whether to increment the tag')
+    increment_group.add_argument('--increment_major', action='store_true', default=False, help='whether to increment the major of the tag')
+
+    return parser.parse_args()
+
+
+if __name__ == '__main__':
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+
+    args = parse_args()
+
+    latest_version, e = ReleaseProcessor.get_git_tag_version(
+            code_repo_owner=args.code_repo_owner,
+            code_repo=args.code_repo,
+            tag_name=args.tag_name,
+            tag_separator=args.tag_separator,
+            use_local_history=True)
+
+    output_version = ReleaseProcessor.bump_version(
+            latest_version,
+            increment=args.increment,
+            increment_major=args.increment_major,
+            exception=e)
+
+    # print the next version to the console, for consumption by bash scripts
+    print(output_version)

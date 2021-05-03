@@ -1,0 +1,6 @@
+#!/Users/cokoro/Downloads/recfun/venv/bin/python3
+
+from workflow_templates import AdhocJavaRunner
+
+if __name__ == '__main__':
+    AdhocJavaRunner.from_args(check_workflow_templates_version=True).run()

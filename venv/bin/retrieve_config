@@ -1,0 +1,17 @@
+#!/Users/cokoro/Downloads/recfun/venv/bin/python3
+
+import argparse
+import os
+import json
+from stallion.cache import CachingConfigLoader
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='A script for retrieving the config for a particular service.')
+    return parser.parse_args()
+
+if __name__ == '__main__':
+    args = parse_args()
+    config_dict = dict(CachingConfigLoader().item)
+
+    print(json.dumps(config_dict, indent=4))
+

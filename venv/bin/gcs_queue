@@ -1,0 +1,171 @@
+#!/Users/cokoro/Downloads/recfun/venv/bin/python3
+
+import argparse
+import logging
+import sys
+import warnings
+
+from google.cloud import storage
+from google.resumable_media.common import InvalidResponse
+from google.api_core.exceptions import NotFound
+from enum import Enum
+from time import sleep
+from uritools import urisplit
+from stallion.retry import retryable
+
+
+
+warnings.filterwarnings("ignore", "Your application has authenticated using end user credentials")
+
+
+class GCSQueueActions(Enum):
+    ENQUEUE = 'enqueue'
+    DEQUEUE = 'dequeue'
+    PEEK_UNTIL = 'peek_until'
+
+    def __str__(self):
+        return self.value
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='A lightweight GCS queue for cloudbuild')
+
+    parser.add_argument(
+        'gcs_queue_file_uri',
+        help='GCS queue file uri, points to a file that holds the build id records')
+
+    parser.add_argument(
+        'build_id',
+        help='Cloud Build ID')
+
+    parser.add_argument('action', type=GCSQueueActions, choices=list(GCSQueueActions))
+
+    parser.add_argument(
+        '--sleep_seconds',
+        type=int,
+        default=10)
+
+    return parser.parse_args()
+
+
+def _get_storage_client():
+    return storage.Client()
+
+
+def _get_blob(gcs_uri):
+    client = _get_storage_client()
+    uri_components = urisplit(gcs_uri)
+    bucket = client.get_bucket(uri_components.authority)
+    return bucket.get_blob(uri_components.path[1:])
+
+
+def _touch_new_blob(gcs_uri):
+    client = _get_storage_client()
+    uri_components = urisplit(gcs_uri)
+    bucket = client.bucket(uri_components.authority)
+    blob = bucket.blob(uri_components.path[1:])
+    blob.upload_from_string('')
+
+
+def _deserialize(raw_queue_data):
+    return [q for q in raw_queue_data.decode('utf-8').split('\n') if q.strip() != ""]
+
+
+def _serialize(queue_data):
+    return '\n'.join(queue_data).encode('utf-8')
+
+
+def _deduplicate(queue):
+    seen = set()
+    return [x for x in queue if not (x in seen or seen.add(x))]
+
+
+def _get_deserialized_queue(gcs_queue_file_uri, logger):
+    blob = _get_blob(args.gcs_queue_file_uri)
+    try:
+        raw_queue_data = blob.download_as_string()
+    except AttributeError as e:
+        logger.info('File does not yet exist on GCS. Writing empty file')
+        _touch_new_blob(args.gcs_queue_file_uri)
+        return []
+    queue_data = _deserialize(raw_queue_data)
+    queue = _deduplicate(list(filter(lambda x: x.strip() != '', queue_data)))
+    return queue
+
+
+def _save(gcs_queue_file_uri, queue):
+    deduped_queue = _deduplicate(queue)
+    serialized = _serialize(deduped_queue)
+    overwrite_blob = _get_blob(args.gcs_queue_file_uri)
+    overwrite_blob.upload_from_string(serialized)
+
+
+@retryable((InvalidResponse, NotFound,), tries=5, delay=10, backoff=2)
+def peek_until(args, logger):
+    blob = _get_blob(args.gcs_queue_file_uri)
+    raw_queue_data = blob.download_as_string()
+    queue = _deserialize(raw_queue_data)
+
+    if len(queue) > 0:
+        first_element_in_queue = queue[0].strip()
+        if first_element_in_queue == args.build_id:
+            logger.info('First element in queue is equal to {}'.format(args.build_id))
+            logger.info('Queue contents: {}'.format(queue))
+            return
+        else:
+            logger.info(
+                'First element in queue ({}) does not equal current build id ({})'.format(
+                    first_element_in_queue,
+                    args.build_id))
+            logger.info('Queue contents: {}'.format(queue))
+            logger.info('Sleeping {}s'.format(args.sleep_seconds))
+            sleep(args.sleep_seconds)
+            peek_until(args, logger)
+    return
+
+
+@retryable((Exception,), tries=2, delay=2, backoff=2)
+def enqueue(args, logger):
+    queue = _get_deserialized_queue(args.gcs_queue_file_uri, logger)
+    queue.append(args.build_id)
+    logger.info('Enqueued build id {} to queue'.format(args.build_id))
+    _save(args.gcs_queue_file_uri, queue)
+    logger.info('Queue contents: {}'.format(queue))
+
+
+@retryable((Exception,), tries=2, delay=2, backoff=2)
+def dequeue(args, logger):
+    queue = _get_deserialized_queue(args.gcs_queue_file_uri, logger)
+    if len(queue) > 0:
+        dequeued_id = queue[0]
+        if dequeued_id == args.build_id:
+            logger.info('Dequeued build id {} from queue'.format(dequeued_id))
+            _dequeued_id = queue.pop(0)
+            _save(args.gcs_queue_file_uri, queue)
+            logger.info('Queue contents: {}'.format(queue))
+        else:
+            logger.warning(
+                'Cannot remove build id {} because it is not at the top of the queue'.format(
+                    args.build_id))
+            logger.info('Queue contents: {}'.format(queue))
+            raise Exception(
+                'Queue out of order. Please fix this manually at {}'.format(
+                    args.gcs_queue_file_uri))
+    else:
+        logger.info('Queue is empty. Returning to caller')
+
+
+if __name__ == '__main__':
+    args = parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='[gcs-queue] [%(asctime)s] [%(levelname)s] %(message)s')
+    logger = logging.getLogger()
+
+    if args.action == GCSQueueActions.PEEK_UNTIL:
+        peek_until(args, logger)
+    elif args.action == GCSQueueActions.ENQUEUE:
+        enqueue(args, logger)
+    elif args.action == GCSQueueActions.DEQUEUE:
+        dequeue(args, logger)

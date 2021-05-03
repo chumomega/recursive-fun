@@ -1,0 +1,25 @@
+#!/Users/cokoro/Downloads/recfun/venv/bin/python3
+import argparse
+import logging
+from stallion.release_process import ReleaseProcessor
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--version-file', required=True)
+    parser.add_argument('--next-git-tag-version', required=True)
+    return parser.parse_args()
+
+if __name__ == '__main__':
+    logging.getLogger().setLevel(logging.INFO)
+    args = parse_args()
+
+    release_version = ReleaseProcessor.get_release_version(
+            version_file=args.version_file,
+            next_git_tag_version=args.next_git_tag_version)
+
+    ReleaseProcessor.write_version_file(
+            args.version_file,
+            release_version,
+            bump_and_set_dev=False)
+
+    print(release_version)

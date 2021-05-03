@@ -1,0 +1,45 @@
+#!/Users/cokoro/Downloads/recfun/venv/bin/python3
+
+from copy import deepcopy
+from workflow_templates import AdhocSparkRunner, json_argfile
+import sys
+
+
+# These jars will be added to each adhoc run. For consistency, ensure they are added
+# here as well for scheduled jobs:
+# https://github.com/etsy/boundary-layer-etsy-plugin/blob/main/boundary_layer_etsy_plugin/plugin.py#L26
+DEFAULT_ADDITIONAL_SPARK_JARS = [
+    'gs://batchjobs-prod-jars-90aq79/jars/adhoc/hadoop-lzo-0.4.20.jar',
+]
+
+
+def set_additional_spark_jars(args):
+    extra_jars_idx = None
+    extra_jars = None
+    new_args = []
+    for i, arg in enumerate(args):
+        if arg.strip() == "--with_extra_jars":
+            extra_jars_idx = i + 1
+            current_extra_jars = args[extra_jars_idx]
+            extra_jars = [j.strip() for j in current_extra_jars.split(',')]
+
+    # We only need to worry about two scenarios:
+    # 1. User passes in --with_extra_jars in which case, we'll just append our new defaults,
+    #    making sure to deduplicate
+    # 2. User doesn't pass in with_extra_jars in which case we'll just add it at the front
+    if extra_jars:
+        extra_jars.extend(DEFAULT_ADDITIONAL_SPARK_JARS)
+        new_args = deepcopy(args)
+        new_args[extra_jars_idx] = ",".join(list(set(extra_jars)))
+    else:
+        new_args = ['--with_extra_jars', ",".join(DEFAULT_ADDITIONAL_SPARK_JARS)] + args
+
+    return new_args
+
+
+if __name__ == '__main__':
+    sysargs = sys.argv[1:]
+    args = json_argfile.merge_arguments(sysargs, json_argfile.get_json(sysargs))
+    args = set_additional_spark_jars(args)
+
+    AdhocSparkRunner.from_args(check_workflow_templates_version=True, args=args).run()

@@ -1,0 +1,89 @@
+#!/Users/cokoro/Downloads/recfun/venv/bin/python3
+import argparse
+import logging
+
+from stallion.release_process import ReleaseProcessor
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+            '--version-file',
+            required=True,
+            help='Location of the json file for storing the version info')
+
+    parser.add_argument(
+            '--artifact-name',
+            required=True,
+            help='Name of the artifact being deployed')
+
+    parser.add_argument(
+            '--next-git-tag-version',
+            required=True,
+            help='Release version being deployed')
+
+    parser.add_argument(
+            '--git-url',
+            default=None,
+            help='URL for remote git repository.  Corresponds to (and '
+                 'defaults to) the GIT_URL environment variable in Jenkins')
+
+    parser.add_argument(
+            '--git-branch',
+            default=None,
+            help='Remote git branch (e.g. origin/master).  Corresponds to '
+                 'and defaults to the $GIT_BRANCH environment variable in '
+                 'Jenkins')
+
+    parser.add_argument(
+            '--temp-git-branch-prefix',
+            default=None,
+            help='String to use as a prefix for the temporary git branch')
+
+    parser.add_argument(
+            '--git-username',
+            default=None,
+            help='Git username to use for pushing commits to the origin')
+
+    parser.add_argument(
+            '--git-password',
+            default=None,
+            help='Git password to use for pushing commits to the origin')
+
+    parser.add_argument(
+            '--jenkins-git-creds-name',
+            default=None,
+            help='Jenkins credential variable name from which to pull git username/password.  e.g. if the value is GITUSER, we will pull username from GITUSER_USR and password from GITUSER_PSW.')
+
+    parser.add_argument(
+            '--git-user-email',
+            default=None,
+            help='Email address to use for making git commits')
+
+    parser.add_argument(
+            '--git-user-display-name',
+            default=None,
+            help='Name to use for making git commits')
+
+    parser.add_argument(
+            '--dry-run',
+            default=False,
+            action='store_true',
+            help='Whether to perform a dry-run.  This executes all local commands but does not push.')
+
+    parser.add_argument(
+            '--error-on-failure',
+            default=False,
+            action='store_true',
+            help='Whether the script should return non-zero if it encounters an exception. '
+                 'By default most exceptions are logged, but then swallowed')
+
+    return parser.parse_args()
+
+
+if __name__ == '__main__':
+    logging.getLogger().setLevel(logging.DEBUG)
+    args = parse_args()
+    processor = ReleaseProcessor(args)
+
+    processor.do_release()

@@ -1,0 +1,390 @@
+#!/Users/cokoro/Downloads/recfun/venv/bin/python3
+
+import os
+import collections
+import argparse
+import logging
+import traceback
+import pprint
+import tabulate
+import socket
+import time
+from stallion.operations import OperationStatus
+from stallion.deploy import manager
+from stallion.deploy.deployers import _ALL_DEPLOYERS
+from stallion.file_loader import ConfigFileLoader
+from stallion.config import ConfigManager
+from stallion.components import ComponentManager
+
+
+def comma_separated(item):
+    return list([s.strip() for s in list([_f for _f in item.split(',') if _f])])
+
+
+def parse_args():
+    def add_common_args(subparser):
+        subparser.add_argument(
+                'projects',
+                type=comma_separated,
+                help='Comma-separated list of project IDs to update')
+
+        subparser.add_argument(
+                '--config_path',
+                default=os.path.expanduser('~/development/BigDataConf/projects'))
+        subparser.add_argument(
+                '--dry_run',
+                action='store_true',
+                default=False)
+        subparser.add_argument(
+                '--enable_debug_logs',
+                action='store_true',
+                default=False)
+        subparser.add_argument(
+                '--extra_debug_logs',
+                action='store_true',
+                default=False)
+        subparser.add_argument(
+                '--write_to_graphite',
+                action='store_true',
+                default=False)
+
+        subparser.add_argument(
+                '--only_components',
+                default=[],
+                type=comma_separated)
+        subparser.add_argument(
+                '--skip_components',
+                default=[],
+                type=comma_separated)
+
+    parser = argparse.ArgumentParser(description='A lighweight script for loading configuration out of files')
+
+    subparsers = parser.add_subparsers(dest='cmd')
+
+    parser_deploy_project = subparsers.add_parser('deploy')
+    add_common_args(parser_deploy_project)
+
+    parser_deploy_project.add_argument(
+            '--force_deploy_components',
+            default=[],
+            type=comma_separated)
+    parser_deploy_project.add_argument(
+            '--force_deploy_all',
+            action='store_true',
+            default=False)
+    parser_deploy_project.add_argument(
+            '--config_push_only',
+            action='store_true',
+            default=False)
+    parser_deploy_project.add_argument(
+            '--force_config_push',
+            action='store_true',
+            default=False)
+
+    parser_clean_project = subparsers.add_parser('clean')
+    add_common_args(parser_clean_project)
+    parser_clean_project.add_argument(
+            '--only_deployers',
+            default=None,
+            type=comma_separated)
+    parser_clean_project.add_argument(
+            '--skip_deployers',
+            default=None,
+            type=comma_separated)
+    parser_clean_project.add_argument(
+            '--max_service_age_days',
+            default=None,
+            type=float)
+    parser_clean_project.add_argument(
+            '--clean_unknown_components',
+            default=False,
+            action='store_true')
+
+    return parser.parse_args()
+
+
+def ensure_empty_intersection(c0, name0, c1, name1):
+    intersection = frozenset(c0 or []) & frozenset(c1 or [])
+    if not intersection:
+        return
+
+    raise Exception(
+            'Invalid arguments: `{}` cannot be both {} and {}!'.format(
+                '`, `'.join(intersection),
+                name0,
+                name1))
+
+
+def resolve_components(projects, component_names):
+    """ Resolve all components specified at the command line to the appropriate
+        project/component pair.
+    """
+    project_components = {}
+    misses = []
+    def _check_explicit_component(name):
+        if len(name.split('/')) != 2:
+            raise Exception(
+                    'Invalid component spec: {} (expected either '
+                    '<project_id>/<component_name>, or a unique component name)'.format(
+                        name))
+
+        (project_id, component_name) = name.split('/')
+
+        if project_id not in projects:
+            raise Exception(
+                    'Invalid component spec: {} (project id {} does not exist)!'.format(
+                        name, project_id))
+
+        if component_name not in projects[project_id].components:
+            raise Exception(
+                    'Invalid component spec: {} (component {} does not exist in project {})!'.format(
+                        name, component_name, project_id))
+
+        project_components.setdefault(project_id, [])
+        project_components[project_id].append(component_name)
+        return True
+
+    def _resolve_component(name):
+        hits = [
+                (project_id, name)
+                for (project_id, project) in list(projects.items())
+                for component_name in project.components
+                if component_name == name ]
+
+        if len(hits) > 1:
+            raise Exception(
+                    'Ambiguous component selector: {} applies to multiple '
+                    'components: {}'.format(
+                        name,
+                        hits))
+
+        if not hits:
+            return False
+
+        (project_id, component_name) = hits[0]
+        project_components.setdefault(project_id, [])
+        project_components[project_id].append(component_name)
+        return True
+
+
+    for component_name in component_names:
+        if '/' in component_name:
+            hit = _check_explicit_component(component_name)
+        else:
+            hit = _resolve_component(component_name)
+
+        if not hit:
+            misses.append(component_name)
+
+    return (project_components, misses)
+
+
+def selector_str(item):
+    result = []
+    for (project, names) in list(item.items()):
+        for name in names:
+            result.append('{}/{}'.format(project, name))
+
+    return result
+
+
+ComponentSelectors = collections.namedtuple('ComponentSelectors',
+                                            ['only_components', 'skip_components', 'force_deploy_components'])
+
+
+def validate_component_selection_args(projects, args):
+    misses = {}
+    (only_components, misses['only_components']) = resolve_components(projects, args.only_components)
+    (skip_components, misses['skip_components']) = resolve_components(projects, args.skip_components)
+
+    force_deploy_components = misses['force_deploy_components'] = {}
+    if 'force_deploy_components' in args:
+        (force_deploy_components, misses['force_deploy_components']) = \
+                resolve_components(projects, args.force_deploy_components)
+
+    if any(misses.values()):
+        message = '   ' + '\n   '.join((key + ': ' + ','.join(values))
+                                       for (key, values) in list(misses.items())
+                                       if values)
+        raise Exception(
+                'Some component selectors were not resolved.  Please check '
+                'these arguments and retry: \n{}'.format(
+                    message))
+
+    only_components_str = selector_str(only_components)
+    skip_components_str = selector_str(skip_components)
+    force_deploy_components_str = selector_str(force_deploy_components)
+
+    ensure_empty_intersection(
+            only_components_str, 'only_components',
+            skip_components_str, 'skip_components')
+
+    ensure_empty_intersection(
+            force_deploy_components_str, 'force_deploy_components',
+            skip_components_str, 'skip_components')
+
+    if only_components and force_deploy_components and \
+            not frozenset(force_deploy_components_str).issubset(
+                    frozenset(only_components_str)):
+        raise Exception(
+                'Invalid mixture of force_deploy_components and only_components: '
+                'force_deploy_components should be a subset of only_components. '
+                'Found: force_deploy_components == {}, only_components == {}'.format(
+                    force_deploy_components_str,
+                    only_components_str))
+
+    return ComponentSelectors(
+            only_components=only_components,
+            skip_components=skip_components,
+            force_deploy_components=force_deploy_components)
+
+
+def tabulate_results(results, dry_run):
+    content = [ (key, value['operation'], value['status'] + (' (dry run)' if dry_run else ''))
+            for (key, value) in list(results.items()) ]
+
+    headers = ('component', 'operation', 'status')
+
+    return tabulate.tabulate(content, headers=headers) + '\n'
+
+
+def summarize_results_and_raise_failures(project_id, results, dry_run):
+    if not results:
+        logging.info('Nothing to deploy for project %s!', project_id)
+    elif dry_run:
+        logging.info('DRY RUN COMPLETE for project %s. Nothing was deployed, but we would '
+                     'have attempted the following:\n %s',
+                     project_id,
+                     tabulate_results(results, dry_run))
+    else:
+        logging.info('DEPLOYMENT SUMMARY for project %s:\n%s',
+                     project_id,
+                     tabulate_results(results, dry_run))
+
+    failures = {
+                component_name: result
+                for (component_name, result) in list(results.items())
+                if result['status'] == OperationStatus.ERROR.value
+            }
+
+    if failures:
+        raise Exception('One or more deployment steps failed:\n{}'.format(
+            pprint.pformat(failures)))
+
+
+def write_to_graphite(project_id):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect(('graphite.etsycorp.com', 2003))
+    s.send('deploys.stallion.{} 1 {}'.format(project_id, int(time.time())).encode('utf-8'))
+    s.close()
+
+
+def update_project(
+        project_id,
+        only_components,
+        skip_components,
+        force_deploy_components,
+        args,
+        loader):
+    project = loader.projects.get(project_id)
+
+    if not project:
+        raise ValueError('No config found for project {}'.format(project_id))
+
+    conf_manager = ConfigManager.for_project(project, ComponentManager())
+    deployers = [ deployer(project) for deployer in _ALL_DEPLOYERS ]
+
+    deploy_manager = manager.DeployManager(
+            conf_manager = conf_manager,
+            dry_run=args.dry_run,
+            deployers=deployers)
+
+    filtered_components = [component
+            for (name, component) in list(project.components.items()) if
+            (not skip_components or name not in skip_components) and
+            (not only_components or name in only_components)]
+
+    for name in project.components:
+        if any(c.name == name for c in filtered_components):
+            continue
+
+        logging.info('Skipping update of component `%s`', name)
+
+    if args.cmd == 'deploy':
+        if (args.write_to_graphite):
+            write_to_graphite(project_id)
+
+        results = deploy_manager.deploy_updates(
+                filtered_components,
+                force_deploy_all=args.force_deploy_all,
+                force_deploy_components=force_deploy_components,
+                config_push_only=args.config_push_only,
+                force_config_push=args.force_config_push)
+
+        summarize_results_and_raise_failures(project_id, results, args.dry_run)
+
+    elif args.cmd == 'clean':
+        if len(filtered_components) != len(project.components) and \
+                args.clean_unknown_components:
+            raise Exception(
+                    'Invalid arguments: cannot set '
+                    'clean_unknown_components=True in combination with '
+                    'component-subsetting arguments --skip_components or '
+                    '--only_components, because this would trigger the '
+                    'deletion of required services!')
+        max_age_seconds = None if args.max_service_age_days is None else \
+                args.max_service_age_days * 24 * 60 * 60
+
+        deploy_manager.delete_stale_versions(
+                max_age_seconds=max_age_seconds,
+                components=filtered_components,
+                only_deployers=args.only_deployers,
+                skip_deployers=args.skip_deployers,
+                clean_unknown_components=args.clean_unknown_components,
+                )
+
+    if loader.errors:
+        raise Exception('Deployment of valid configs succeeded for project {}, '
+                        'but some configs were invalid: {}'.format(
+                            project_id,
+                            loader.errors))
+
+
+if __name__ == '__main__':
+    args = parse_args()
+
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG if args.enable_debug_logs else logging.INFO)
+
+    if not args.extra_debug_logs:
+        # logs on urllib3 are almost never useful, but don't rule
+        # out the possibility that they may be useful someday
+        logging.getLogger("urllib3").setLevel(logging.INFO)
+
+    loader = ConfigFileLoader(args.config_path, projects = args.projects)
+
+    selectors = validate_component_selection_args(loader.projects, args)
+
+    errors = {}
+    for project_id in args.projects:
+        if selectors.only_components and project_id not in selectors.only_components:
+            logger.info('Skipping project %s because it is not required by any of the --only_components args',
+                        project_id)
+            continue
+
+        try:
+
+            update_project(
+                    project_id,
+                    only_components=selectors.only_components.get(project_id, []),
+                    skip_components=selectors.skip_components.get(project_id, []),
+                    force_deploy_components=selectors.force_deploy_components.get(project_id, []),
+                    args=args,
+                    loader=loader)
+        except Exception as e:
+            errors[project_id] = traceback.format_exc()
+
+    if errors:
+        raise Exception(
+                'Errors occurred while updating projects: \n{}'.format(
+                    '\n'.join('{}: {}'.format(*kv) for kv in list(errors.items()))))
