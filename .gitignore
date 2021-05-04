@@ -1,3 +1,6 @@
-/venv
-/project
-/target
+venv/
+project/
+target/
+venv
+project
+target
