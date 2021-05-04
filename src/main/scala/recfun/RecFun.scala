@@ -53,6 +53,16 @@ object RecFun extends RecFunInterface {
   /**
    * Exercise 3
    * how many ways are there to make change given the denominations of coins
+   * without dynamic programming, we calculate some problems repeatedly and this can be seen by drawing out the recursive tree
    */
-  def countChange(money: Int, coins: List[Int]): Int = ???
+  def countChange(money: Int, coins: List[Int]): Int = {
+    def countChange(money: Int, coins: List[Int], coin_index_to_omit: Int): Int = {
+      if (money == 0) 1
+      else if (money < 0) 0
+      else if (coin_index_to_omit <= 0 && money >= 1) 0
+      else countChange(money, coins, coin_index_to_omit-1) +
+        countChange(money - coins(coin_index_to_omit - 1), coins, coin_index_to_omit)
+    }
+    countChange(money,coins, coins.length)
+  }
 }
