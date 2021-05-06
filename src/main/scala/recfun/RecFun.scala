@@ -18,7 +18,10 @@ object RecFun extends RecFunInterface {
    * Exercise 1
    * get the nnumber in pascals triangle given a column and row number
    */
-  def pascal(c: Int, r: Int): Int = ???
+  def pascal(c: Int, r: Int): Int = {
+
+
+  }
 
   /**
    * Exercise 2
@@ -49,7 +52,6 @@ object RecFun extends RecFunInterface {
     stackRec(mutable.Stack[Char](), chars)
   }
 
-  balance("hllo(world)xyz".toList)
   /**
    * Exercise 3
    * how many ways are there to make change given the denominations of coins

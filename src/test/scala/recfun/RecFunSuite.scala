@@ -34,16 +34,16 @@ class RecFunSuite {
   @Test def `countChange: unsorted CHF`: Unit =
     assertEquals(1022, countChange(300,List(500,5,50,100,20,200,10)))
 
-//  // ------ pascal tests ------------------------------------------------------
-//
-//  @Test def `pascal: col=0,row=2`: Unit =
-//    assertEquals(1, pascal(0, 2))
-//
-//  @Test def `pascal: col=1,row=2`: Unit =
-//    assertEquals(2, pascal(1, 2))
-//
-//  @Test def `pascal: col=1,row=3`: Unit =
-//    assertEquals(3, pascal(1, 3))
+  // ------ pascal tests ------------------------------------------------------
+
+  @Test def `pascal: col=0,row=2`: Unit =
+    assertEquals(1, pascal(0, 2))
+
+  @Test def `pascal: col=1,row=2`: Unit =
+    assertEquals(2, pascal(1, 2))
+
+  @Test def `pascal: col=1,row=3`: Unit =
+    assertEquals(3, pascal(1, 3))
 
   @Rule def individualTestTimeout = new org.junit.rules.Timeout(10 * 1000)
 }
