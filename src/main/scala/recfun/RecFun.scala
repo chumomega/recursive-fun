@@ -19,8 +19,15 @@ object RecFun extends RecFunInterface {
    * get the nnumber in pascals triangle given a column and row number
    */
   def pascal(c: Int, r: Int): Int = {
+//    first column is always 1, and when the col/row are equal then we're at the end of a given row
+    if (c == 0 || c == r) 1
+    else {
+//      col = 3, row = 2
+//          pascal(2, 1)            +          pascal(3, 1)
+//  pascal(1,0) | pascal(2,1)            pascal(2,0) | pascal(3,1)
 
-
+      pascal(c-1, r-1) + pascal (c, r-1)
+    }
   }
 
   /**
